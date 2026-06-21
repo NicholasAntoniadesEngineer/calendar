@@ -10,15 +10,20 @@ Open [`relocation-calendar.html`](relocation-calendar.html) directly in a browse
 Everything (markup, styles, and logic) lives in that one file, so there is nothing
 to install or build.
 
-## Saving & loading your data
+## Saving your data
 
-- **Save** — writes the whole plan to one CSV file (`relocation-plan.csv`). The first
-  Save asks where to put it; **every Save after that silently overwrites that same
-  file** — no dialogs, no duplicate copies. (Uses the browser File System Access API,
-  available in Chrome / Edge; other browsers fall back to a normal download.) The file
-  it's writing to is shown next to the button.
-- **Open** — loads a plan back and remembers the file, so the next Save overwrites it.
-  It opens the CSV you saved, and still reads older `.json` backups too.
+Your plan is **saved automatically in your browser** as you type — close the tab or
+reload the page and everything (balances, credit cards, to-dos, calendar entries) is
+exactly as you left it. There is no button to press for this.
+
+To keep a **file copy** (for a backup, or to move the plan to another computer):
+
+- **Save a copy** — writes the whole plan to one CSV file (`relocation-plan.csv`).
+  When the page is served over http(s) (e.g. GitHub Pages or a local server) this
+  shows a *Save As* dialog and then overwrites that same file on later saves. Opened
+  directly from disk (a `file://` path) the browser can't show that dialog, so it
+  downloads a copy to your Downloads folder instead.
+- **Open** — loads a CSV file (or an older `.json` backup) back in.
 
 The CSV is a single flat, spreadsheet-friendly sheet; every row is self-describing via
 its first column (`record`): `meta` (settings), `bank` / `credit` / `owed`,

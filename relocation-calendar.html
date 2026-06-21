@@ -287,7 +287,8 @@
     <b id="grandTotal" class="tabular">&mdash;</b>
   </div>
   <div class="ctl no-print">
-    <button id="save" class="primary">Save</button>
+    <span id="autosave" style="font-size:11px;color:#9fb3b0;letter-spacing:.03em;">Auto-saving to this browser</span>
+    <button id="save" class="primary">Save a copy</button>
     <button id="open">Open</button>
     <span id="fileName" style="font-size:12px;color:#9fb3b0;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
     <button id="print">Print / PDF</button>
@@ -800,6 +801,7 @@
   var fileHandle=null;
   var FS=('showSaveFilePicker' in window);
   var CSV_TYPES=[{description:'Relocation plan',accept:{'text/csv':['.csv']}}];
+  var warnedDL=false;
   function setFileName(n){var el=document.getElementById('fileName');if(el)el.textContent=n?('\u2014 '+n):'';}
   function flashSaved(msg){var b=document.getElementById('save'),t='Save';b.textContent=msg||'Saved \u2713';b.disabled=true;setTimeout(function(){b.textContent=t;b.disabled=false;},1200);}
   function applyJSONText(str){
@@ -820,7 +822,7 @@
       if(s.count>0)state.count=Math.min(s.count|0,120);
       if(typeof s.docTitle==='string')state.docTitle=s.docTitle;
       if(typeof s.summaryDate==='string')state.summaryDate=s.summaryDate;
-      render();
+      render();persist();
     }catch(e){restore(snap);try{render();}catch(_){}throw e;}
   }
   function loadText(text){
@@ -831,6 +833,10 @@
   function downloadCSV(csv){
     var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
     var url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=(fileHandle&&fileHandle.name)||'relocation-plan.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  }
+  function fallbackDownload(csv){
+    downloadCSV(csv);flashSaved('Downloaded');
+    if(!warnedDL){warnedDL=true;alert("Your plan is auto-saved in this browser, so nothing is lost \u2014 just reopen this page.\n\nA file copy was downloaded to your Downloads folder. This browser can't show a \u201cSave As\u201d dialog for a file opened directly from disk; to choose where to save (and overwrite one file), open this page from a web address instead of a file:// path \u2014 e.g. GitHub Pages or a local server.");}
   }
   function doSave(){
     var csv='\ufeff'+buildCSV();
@@ -843,10 +849,10 @@
           setFileName(fileHandle.name);flashSaved();
         }catch(e){
           if(e&&e.name==='AbortError')return;          // user dismissed the picker
-          downloadCSV(csv);flashSaved('Downloaded');   // permission/other failure -> fall back
+          fallbackDownload(csv);                       // permission/other failure -> download a copy
         }
       })();
-    }else{downloadCSV(csv);flashSaved('Downloaded');}
+    }else{fallbackDownload(csv);}
   }
   function doOpen(){
     if(FS&&window.showOpenFilePicker){
@@ -1023,14 +1029,25 @@
       state.todo=todo;            // unconditional, so an emptied checklist round-trips
       state.store=ns.store;
       state.cardsDue=ns.cardsDue;
-      render();
+      render();persist();
     }catch(e){
       restore(snap);try{render();}catch(_){}   // leave the previous good plan intact and on screen
       throw e;
     }
   }
+  /* ---------- automatic backup to this browser (so nothing is ever lost) ---------- */
+  var LS_KEY='relocationPlanV1';
+  function markAutosaved(){var el=document.getElementById('autosave');if(!el)return;el.textContent='Saved to this browser ✓';clearTimeout(markAutosaved._t);markAutosaved._t=setTimeout(function(){el.textContent='Auto-saving to this browser';},1600);}
+  function persist(){try{localStorage.setItem(LS_KEY,JSON.stringify({version:6,state:state}));markAutosaved();}catch(e){}}
+  var lsTimer=null;function scheduleLocalSave(){clearTimeout(lsTimer);lsTimer=setTimeout(persist,400);}
+  document.addEventListener('input',scheduleLocalSave);
+  document.addEventListener('change',scheduleLocalSave);
+  document.addEventListener('click',scheduleLocalSave);
+
   document.getElementById('currency').value=state.currency;
-  render();
+  var __restored=false;
+  try{var __raw=localStorage.getItem(LS_KEY);if(__raw){applyJSONText(__raw);__restored=true;}}catch(e){}
+  if(!__restored)render();
   if(document.fonts&&document.fonts.ready){document.fonts.ready.then(function(){paginateTodo(true);});}
   var rsz=null;window.addEventListener('resize',function(){clearTimeout(rsz);rsz=setTimeout(function(){paginateTodo(true);},200);});
 })();
