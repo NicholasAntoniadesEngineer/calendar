@@ -320,58 +320,51 @@
 
   var DEFAULT_TODO=[
     {title:'Offer & employment',items:[
-      'Confirm KATIM relocation support: flights, shipping, housing, visa costs',
-      'Enquire on onboarding, flights, hotel, movers refunds'
+      'Confirm relocation support: flights, shipping, housing, visa costs',
+      'Ask about onboarding, flights, hotel, and movers reimbursement'
     ]},
-    {title:'UAE arrival & setup',items:[
+    {title:'Arrival & setup',items:[
       'Plan movers',
-      'Start looking at accommodation',
-      'Open UAE bank accounts',
-      'Car hire',
-      'Planning finance',
-      'UAE work visa',
-      'Spouse dependen visa',
-      'Attest marriage certificates',
-      'Lara tourist visa health insurance',
-      'Driving licence conversion (SA → UAE)',
-      'Attest degree certificates',
-      'Attest birth certificates',
-      'UAE medical',
-      'UAE Emirates ID'
+      'Look at accommodation',
+      'Open a local bank account',
+      'Arrange transport',
+      'Work visa',
+      'Dependent visa',
+      'Attest certificates (marriage / degree / birth)',
+      'Driving licence conversion',
+      'Medical / health insurance',
+      'National ID'
     ]},
-    {title:'Austria exit admin',items:[
-      'De-register residence (Abmeldung) at Meldeamt',
+    {title:'Exit admin (previous country)',items:[
+      'De-register residence',
       'Cancel electricity',
       'Cancel internet / phone',
       'Cancel insurance',
-      'Cancel travel cards',
-      'Handle Austrian lease: notice, deposit return, handover',
-      'Final Austrian tax filing / notify Finanzamt'
+      'Handle lease: notice, deposit return, handover',
+      'Final tax filing'
     ]},
     {title:'Banking & cards',items:[
-      'Move all accounts to Standard Bank',
-      'Lara Standard Bank App connect',
-      'Cancel Amex',
-      'Cancel Monzo',
+      'Consolidate accounts',
+      'Cancel unused cards',
       'Notify card providers of address change / pay down before move'
     ]},
     {title:'Retirement & investments',items:[
-      'UK withdraw pension',
-      'EU withdraw pension'
+      'Review pension options',
+      'Review investments'
     ]},
     {title:'Shipping & logistics',items:[
-      'Get moving quotes (Vienna → Abu Dhabi)',
-      'Book flights to South Africa',
-      'Reference previous moving lists (UK → Austria)'
+      'Get moving quotes',
+      'Book flights',
+      'Reference previous moving lists'
     ]},
-    {title:'Austria flat',items:[
-      'Fix window',
-      'White paint',
+    {title:'Old home',items:[
+      'Repairs',
+      'Touch-up paint',
       'Order boxes and packaging'
     ]},
-    {title:'Lynne Europe Holiday',items:[
-      'Holiday Plan',
-      'Airbnb',
+    {title:'Travel',items:[
+      'Plan',
+      'Accommodation',
       'Transport costs'
     ]}
   ];
@@ -383,7 +376,7 @@
     banks:[{name:'',amount:null}],
     credit:[{name:'',amount:null}],
     owed:[{name:'',amount:null}],
-    reimbAED:30000, reimbRate:0.2374, reimbCur:'AED',
+    reimbAED:0, reimbRate:0.9, reimbCur:'USD',
     todo:JSON.parse(JSON.stringify(DEFAULT_TODO)).map(function(s){return {title:s.title,items:s.items.map(function(t){return {text:t,done:false};})};}),
     store:{},
     cardsDue:{}
