@@ -287,10 +287,13 @@
     <b id="grandTotal" class="tabular">&mdash;</b>
   </div>
   <div class="ctl no-print">
-    <button id="save">Save plan</button>
-    <button id="load">Load plan</button>
+    <button id="save">Save JSON</button>
+    <button id="load">Load JSON</button>
+    <button id="exportCsv">Export CSV</button>
+    <button id="importCsv">Import CSV</button>
     <button id="print" class="primary">Print / Save PDF</button>
     <input id="file" type="file" accept="application/json" hidden>
+    <input id="csvFile" type="file" accept=".csv,text/csv" hidden>
   </div>
 </div>
 
@@ -799,6 +802,7 @@
   document.getElementById('file').addEventListener('change',function(ev){
     var f=ev.target.files[0];if(!f)return;var rd=new FileReader();
     rd.onload=function(){
+      var snap=snapshot();
       try{
         var obj=JSON.parse(rd.result),s=obj.state||obj;
         if(s.store){for(var k in s.store){var e=s.store[k];if(e&&!e.items){var arr=[];if(e.note||e.amount!=null)arr.push({label:e.note||'',amount:(e.amount!=null?e.amount:null)});s.store[k]={items:arr};}}state.store=s.store;}
@@ -809,13 +813,188 @@
         if(s.todo&&s.todo.length)state.todo=s.todo;
         if(s.reimbAED!=null)state.reimbAED=s.reimbAED;
         if(s.reimbRate!=null)state.reimbRate=s.reimbRate;
-        if(s.reimbCur)state.reimbCur=s.reimbCur;
+        if(typeof s.reimbCur==='string')state.reimbCur=s.reimbCur;
         if(s.currency){state.currency=s.currency;document.getElementById('currency').value=s.currency;}
-        if(s.start)state.start=s.start;if(s.count)state.count=s.count;
+        if(s.start&&!isNaN(s.start.y)&&s.start.m>=0&&s.start.m<=11)state.start=s.start;
+        if(s.count>0)state.count=Math.min(s.count|0,120);
         if(typeof s.docTitle==='string')state.docTitle=s.docTitle;
-        if(s.summaryDate)state.summaryDate=s.summaryDate;
+        if(typeof s.summaryDate==='string')state.summaryDate=s.summaryDate;
         render();
-      }catch(e){alert("Couldn't read that file \u2014 make sure it's a plan saved from this page.");}
+      }catch(e){restore(snap);try{render();}catch(_){}alert("Couldn't read that file \u2014 make sure it's a plan saved from this page.");}
+    };
+    rd.readAsText(f);ev.target.value='';
+  });
+
+  /* ---------- CSV export / import (lossless round-trip of the whole plan) ----------
+     One flat sheet; each row is self-describing via its `record` tag. Columns:
+       record | key | name | amount | due | done | weekday | total
+     record=meta          key=field        name=value                              (scalars: start "YYYY-MM", count, currency, docTitle, summaryDate, reimbAmount/reimbRate=amount, reimbCur)
+     record=bank/credit/owed               name=label    amount=number
+     record=todo_section  key=sectionIndex name=title
+     record=todo_item     key=sectionIndex name=text                       done=true/false
+     record=day           key=YYYY-MM-DD   name=label    amount=number              weekday=Mon..Sun  total=day sum (both reference-only, ignored on import)
+     record=card          key=YYYY-MM      name=card     amount=number   due=text
+     EVERY calendar day in the visible range is emitted (empty days too) so the whole
+     calendar is visible/editable in a spreadsheet; weekday+total are read-only helpers. */
+  var CSV_COLS=['record','key','name','amount','due','done','weekday','total'];
+  function csvCell(v){
+    if(v==null)return '';
+    var s=String(v);
+    return /[",\r\n]/.test(s)?('"'+s.replace(/"/g,'""')+'"'):s;
+  }
+  function csvLine(a){return a.map(csvCell).join(',');}
+  // Formula-injection guard: a cell a spreadsheet would execute (leads with = + - @ tab CR)
+  // is prefixed with an apostrophe on export and un-prefixed on import — applied to TEXT
+  // fields only (never numeric amounts), so the round-trip stays byte-exact.
+  function gtext(v){var s=String(v==null?'':v);return /^[=+\-@\t\r]/.test(s)?("'"+s):s;}
+  function ungtext(v){var s=String(v==null?'':v);return /^'[=+\-@\t\r]/.test(s)?s.slice(1):s;}
+  function dowName(date){ // date = "YYYY-MM-DD"
+    var d=new Date(+date.slice(0,4),+date.slice(5,7)-1,+date.slice(8,10));
+    return WEEK[(d.getDay()+6)%7];
+  }
+  function buildCSV(){
+    var rows=[CSV_COLS.slice()];
+    function row(record,key,name,amount,due,done,weekday,total){
+      rows.push([record,
+        key==null?'':key,
+        gtext(name),
+        (amount==null||amount==='')?'':amount,
+        gtext(due),
+        done==null?'':done,
+        weekday==null?'':weekday,
+        (total==null||total==='')?'':total]);
+    }
+    row('meta','start',ymKey(state.start.y,state.start.m));
+    row('meta','count',state.count);
+    row('meta','currency',state.currency);
+    row('meta','docTitle',state.docTitle||'');
+    row('meta','summaryDate',state.summaryDate||'');
+    row('meta','reimbAmount',null,state.reimbAED);
+    row('meta','reimbRate',null,state.reimbRate);
+    row('meta','reimbCur',state.reimbCur||'');
+    [['banks','bank'],['credit','credit'],['owed','owed']].forEach(function(p){
+      state[p[0]].forEach(function(it){row(p[1],'',it.name||'',it.amount);});
+    });
+    state.todo.forEach(function(sec,si){
+      row('todo_section',si,sec.title||'');
+      sec.items.forEach(function(it){row('todo_item',si,it.text||'',null,null,it.done?'true':'false');});
+    });
+    // Every day in the visible range, PLUS any stored day outside it that holds data.
+    var dateSet={};
+    Object.keys(state.store).forEach(function(d){var e=state.store[d];if(e&&e.items&&e.items.length)dateSet[d]=true;});
+    for(var i=0;i<state.count;i++){
+      var mm=(state.start.m+i)%12,yy=state.start.y+Math.floor((state.start.m+i)/12),dim=new Date(yy,mm+1,0).getDate();
+      for(var d=1;d<=dim;d++)dateSet[iso(yy,mm,d)]=true;
+    }
+    Object.keys(dateSet).sort().forEach(function(date){
+      var items=(state.store[date]&&state.store[date].items)||[],wd=dowName(date);
+      if(items.length){items.forEach(function(it,ii){row('day',date,it.label||'',it.amount,'','',wd,(ii===0&&hasPriced(date))?daySum(date):'');});}
+      else{row('day',date,'',null,'','',wd,'');} // placeholder so the empty day still appears
+    });
+    Object.keys(state.cardsDue).sort().forEach(function(ym){
+      cardsArr(ym).forEach(function(it){row('card',ym,it.card||'',it.amount,it.due||'');});
+    });
+    return rows.map(csvLine).join('\r\n')+'\r\n';
+  }
+  function parseCSV(text){
+    if(text.charCodeAt(0)===0xFEFF)text=text.slice(1); // strip UTF-8 BOM (Excel)
+    var rows=[],row=[],field='',started=false,i=0,n=text.length,q=false;
+    function endField(){row.push(field);field='';started=false;}
+    while(i<n){
+      var c=text[i];
+      if(q){
+        if(c==='"'){if(text[i+1]==='"'){field+='"';i+=2;}else{q=false;i++;}}
+        else{field+=c;i++;}
+        continue;
+      }
+      if(c==='"'&&!started){q=true;started=true;i++;}              // quote only opens at field start (RFC-4180)
+      else if(c===','){endField();i++;}
+      else if(c==='\r'){endField();rows.push(row);row=[];i++;if(text[i]==='\n')i++;}
+      else if(c==='\n'){endField();rows.push(row);row=[];i++;}
+      else{field+=c;started=true;i++;}                             // any other char (incl. a mid-field ") is literal
+    }
+    if(field!==''||row.length){row.push(field);rows.push(row);}
+    return rows;
+  }
+  function snapshot(){return JSON.parse(JSON.stringify({start:state.start,count:state.count,currency:state.currency,
+    docTitle:state.docTitle,summaryDate:state.summaryDate,reimbAED:state.reimbAED,reimbRate:state.reimbRate,reimbCur:state.reimbCur,
+    banks:state.banks,credit:state.credit,owed:state.owed,todo:state.todo,store:state.store,cardsDue:state.cardsDue}));}
+  function restore(s){state.start=s.start;state.count=s.count;state.currency=s.currency;state.docTitle=s.docTitle;
+    state.summaryDate=s.summaryDate;state.reimbAED=s.reimbAED;state.reimbRate=s.reimbRate;state.reimbCur=s.reimbCur;
+    state.banks=s.banks;state.credit=s.credit;state.owed=s.owed;state.todo=s.todo;state.store=s.store;state.cardsDue=s.cardsDue;}
+  function applyCSV(text){
+    var rows=parseCSV(text);
+    if(!rows.length)throw new Error('file is empty');
+    var header=rows[0].map(function(s){return (s||'').trim().toLowerCase();});
+    if(header[0]!=='record')throw new Error('missing "record" header column');
+    var ix={};header.forEach(function(h,i){ix[h]=i;});
+    function get(r,name){var i=ix[name];return (i==null||r[i]==null)?'':r[i];}
+    function num(v){v=String(v==null?'':v).trim();if(v==='')return null;var f=parseFloat(v);return isNaN(f)?null:f;}
+    // null = "not present in file" (leave existing value); a present-but-empty cell restores empty.
+    var ns={start:null,count:null,currency:null,docTitle:null,summaryDate:null,
+            reimbAED:null,reimbRate:null,reimbCur:null,
+            banks:[],credit:[],owed:[],secs:{},maxSec:-1,store:{},cardsDue:{}};
+    function sec(idx){if(!ns.secs[idx]){ns.secs[idx]={title:'',items:[]};if(idx>ns.maxSec)ns.maxSec=idx;}return ns.secs[idx];}
+    for(var r=1;r<rows.length;r++){
+      var row=rows[r];
+      if(!row.length||row.every(function(c){return c==null||c==='';}))continue;
+      var rec=String(get(row,'record')).trim(),
+          key=get(row,'key'),name=ungtext(get(row,'name')),
+          amount=get(row,'amount'),due=ungtext(get(row,'due')),done=get(row,'done');
+      if(rec==='meta'){
+        var k=String(key).trim().toLowerCase();
+        if(k==='start'){var p=String(name).split('-');if(p.length>=2){var yy=parseInt(p[0],10),mm=parseInt(p[1],10);if(!isNaN(yy)&&!isNaN(mm)&&mm>=1&&mm<=12)ns.start={y:yy,m:mm-1};}}
+        else if(k==='count'){var c2=parseInt(name,10);if(!isNaN(c2)&&c2>0)ns.count=Math.min(c2,120);} // clamp so a huge value can't hang the render loop
+        else if(k==='currency'){var cu=String(name).trim();if(cu)ns.currency=cu;}
+        else if(k==='doctitle'){ns.docTitle=String(name);}
+        else if(k==='summarydate'){ns.summaryDate=String(name);}
+        else if(k==='reimbamount'){ns.reimbAED=num(amount);}
+        else if(k==='reimbrate'){ns.reimbRate=num(amount);}
+        else if(k==='reimbcur'){ns.reimbCur=String(name).trim();}
+      }
+      else if(rec==='bank'){ns.banks.push({name:String(name),amount:num(amount)});}
+      else if(rec==='credit'){ns.credit.push({name:String(name),amount:num(amount)});}
+      else if(rec==='owed'){ns.owed.push({name:String(name),amount:num(amount)});}
+      else if(rec==='todo_section'){var si=parseInt(key,10);if(isNaN(si))si=ns.maxSec+1;sec(si).title=String(name);}
+      else if(rec==='todo_item'){var sj=parseInt(key,10);if(isNaN(sj))sj=ns.maxSec<0?0:ns.maxSec;sec(sj).items.push({text:String(name),done:/^\s*true\s*$/i.test(String(done))});}
+      else if(rec==='day'){var dk=String(key).trim();if(dk&&(String(name)!==''||num(amount)!=null)){if(!ns.store[dk])ns.store[dk]={items:[]};ns.store[dk].items.push({label:String(name),amount:num(amount)});}} // skip empty-day placeholders
+      else if(rec==='card'){var ck=String(key).trim();if(ck){if(!ns.cardsDue[ck])ns.cardsDue[ck]=[];ns.cardsDue[ck].push({card:String(name),due:String(due),amount:num(amount)});}}
+    }
+    var todo=[];Object.keys(ns.secs).map(Number).sort(function(a,b){return a-b;}).forEach(function(i){todo.push(ns.secs[i]);});
+    // Commit atomically: snapshot first, and roll back if anything (incl. render) throws,
+    // so a bad import can never leave a half-written / unrenderable state.
+    var snap=snapshot();
+    try{
+      if(ns.start)state.start=ns.start;
+      if(ns.count)state.count=ns.count;
+      if(ns.currency){state.currency=ns.currency;document.getElementById('currency').value=ns.currency;}
+      if(ns.docTitle!=null)state.docTitle=ns.docTitle;
+      if(ns.summaryDate!=null)state.summaryDate=ns.summaryDate;
+      if(ns.reimbAED!=null)state.reimbAED=ns.reimbAED;
+      if(ns.reimbRate!=null)state.reimbRate=ns.reimbRate;
+      if(ns.reimbCur!=null)state.reimbCur=ns.reimbCur;
+      state.banks=ns.banks.length?ns.banks:[{name:'',amount:null}];
+      state.credit=ns.credit.length?ns.credit:[{name:'',amount:null}];
+      state.owed=ns.owed.length?ns.owed:[{name:'',amount:null}];
+      state.todo=todo;            // unconditional, so an emptied checklist round-trips
+      state.store=ns.store;
+      state.cardsDue=ns.cardsDue;
+      render();
+    }catch(e){
+      restore(snap);try{render();}catch(_){}   // leave the previous good plan intact and on screen
+      throw e;
+    }
+  }
+  document.getElementById('exportCsv').addEventListener('click',function(){
+    var blob=new Blob(['﻿'+buildCSV()],{type:'text/csv;charset=utf-8;'});
+    var url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='relocation-plan.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  });
+  document.getElementById('importCsv').addEventListener('click',function(){document.getElementById('csvFile').click();});
+  document.getElementById('csvFile').addEventListener('change',function(ev){
+    var f=ev.target.files[0];if(!f)return;var rd=new FileReader();
+    rd.onload=function(){
+      try{applyCSV(String(rd.result));}
+      catch(e){alert("Couldn't read that CSV — make sure it's a plan exported from this page.\n\n("+((e&&e.message)||e)+")");}
     };
     rd.readAsText(f);ev.target.value='';
   });
