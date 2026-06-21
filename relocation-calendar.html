@@ -287,13 +287,11 @@
     <b id="grandTotal" class="tabular">&mdash;</b>
   </div>
   <div class="ctl no-print">
-    <button id="save">Save JSON</button>
-    <button id="load">Load JSON</button>
-    <button id="exportCsv">Export CSV</button>
-    <button id="importCsv">Import CSV</button>
-    <button id="print" class="primary">Print / Save PDF</button>
-    <input id="file" type="file" accept="application/json" hidden>
-    <input id="csvFile" type="file" accept=".csv,text/csv" hidden>
+    <button id="save" class="primary">Save</button>
+    <button id="open">Open</button>
+    <span id="fileName" style="font-size:12px;color:#9fb3b0;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+    <button id="print">Print / PDF</button>
+    <input id="file" type="file" accept=".csv,.json,text/csv,application/json" hidden>
   </div>
 </div>
 
@@ -794,34 +792,80 @@
     paginateTodo(true);
   });
 
-  document.getElementById('save').addEventListener('click',function(){
-    var blob=new Blob([JSON.stringify({version:5,state:state},null,2)],{type:'application/json'});
-    var url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='relocation-plan.json';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
-  });
-  document.getElementById('load').addEventListener('click',function(){document.getElementById('file').click();});
+  /* ---------- Save / Open: overwrite ONE csv file in place ----------
+     Save remembers the file (File System Access API, Chrome/Edge) so the first
+     Save asks where to put relocation-plan.csv and every later Save silently
+     overwrites it. Open remembers the opened csv so Save overwrites that one.
+     Browsers without the API fall back to a normal download. */
+  var fileHandle=null;
+  var FS=('showSaveFilePicker' in window);
+  var CSV_TYPES=[{description:'Relocation plan',accept:{'text/csv':['.csv']}}];
+  function setFileName(n){var el=document.getElementById('fileName');if(el)el.textContent=n?('\u2014 '+n):'';}
+  function flashSaved(msg){var b=document.getElementById('save'),t='Save';b.textContent=msg||'Saved \u2713';b.disabled=true;setTimeout(function(){b.textContent=t;b.disabled=false;},1200);}
+  function applyJSONText(str){
+    var snap=snapshot();
+    try{
+      var obj=JSON.parse(str),s=obj.state||obj;
+      if(s.store){for(var k in s.store){var e=s.store[k];if(e&&!e.items){var arr=[];if(e.note||e.amount!=null)arr.push({label:e.note||'',amount:(e.amount!=null?e.amount:null)});s.store[k]={items:arr};}}state.store=s.store;}
+      if(s.cardsDue)state.cardsDue=s.cardsDue;
+      if(s.banks&&s.banks.length)state.banks=s.banks;
+      if(s.credit&&s.credit.length)state.credit=s.credit;
+      if(s.owed&&s.owed.length)state.owed=s.owed;
+      if(s.todo&&s.todo.length)state.todo=s.todo;
+      if(s.reimbAED!=null)state.reimbAED=s.reimbAED;
+      if(s.reimbRate!=null)state.reimbRate=s.reimbRate;
+      if(typeof s.reimbCur==='string')state.reimbCur=s.reimbCur;
+      if(s.currency){state.currency=s.currency;document.getElementById('currency').value=s.currency;}
+      if(s.start&&!isNaN(s.start.y)&&s.start.m>=0&&s.start.m<=11)state.start=s.start;
+      if(s.count>0)state.count=Math.min(s.count|0,120);
+      if(typeof s.docTitle==='string')state.docTitle=s.docTitle;
+      if(typeof s.summaryDate==='string')state.summaryDate=s.summaryDate;
+      render();
+    }catch(e){restore(snap);try{render();}catch(_){}throw e;}
+  }
+  function loadText(text){
+    var t=(text&&text.charCodeAt(0)===0xFEFF)?text.slice(1):text;
+    if(/^\s*[\[{]/.test(t))applyJSONText(t);   // legacy JSON plan
+    else applyCSV(text);                        // CSV (applyCSV strips its own BOM)
+  }
+  function downloadCSV(csv){
+    var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    var url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=(fileHandle&&fileHandle.name)||'relocation-plan.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  }
+  function doSave(){
+    var csv='\ufeff'+buildCSV();
+    if(FS){
+      (async function(){
+        try{
+          if(!fileHandle)fileHandle=await window.showSaveFilePicker({suggestedName:'relocation-plan.csv',types:CSV_TYPES});
+          var w=await fileHandle.createWritable();   // truncates, so a shorter plan overwrites cleanly
+          await w.write(csv);await w.close();
+          setFileName(fileHandle.name);flashSaved();
+        }catch(e){
+          if(e&&e.name==='AbortError')return;          // user dismissed the picker
+          downloadCSV(csv);flashSaved('Downloaded');   // permission/other failure -> fall back
+        }
+      })();
+    }else{downloadCSV(csv);flashSaved('Downloaded');}
+  }
+  function doOpen(){
+    if(FS&&window.showOpenFilePicker){
+      (async function(){
+        try{
+          var picked=await window.showOpenFilePicker({types:[{description:'Relocation plan',accept:{'text/csv':['.csv'],'application/json':['.json']}}]});
+          var h=picked[0],file=await h.getFile(),text=await file.text();
+          loadText(text);
+          fileHandle=/\.csv$/i.test(h.name)?h:null;    // overwrite csv in place; migrate a legacy json to a new csv on next Save
+          setFileName(fileHandle?h.name:'');
+        }catch(e){if(e&&e.name==='AbortError')return;alert("Couldn't open that file \u2014 make sure it's a plan saved from this page.");}
+      })();
+    }else{document.getElementById('file').click();}
+  }
+  document.getElementById('save').addEventListener('click',doSave);
+  document.getElementById('open').addEventListener('click',doOpen);
   document.getElementById('file').addEventListener('change',function(ev){
     var f=ev.target.files[0];if(!f)return;var rd=new FileReader();
-    rd.onload=function(){
-      var snap=snapshot();
-      try{
-        var obj=JSON.parse(rd.result),s=obj.state||obj;
-        if(s.store){for(var k in s.store){var e=s.store[k];if(e&&!e.items){var arr=[];if(e.note||e.amount!=null)arr.push({label:e.note||'',amount:(e.amount!=null?e.amount:null)});s.store[k]={items:arr};}}state.store=s.store;}
-        if(s.cardsDue)state.cardsDue=s.cardsDue;
-        if(s.banks&&s.banks.length)state.banks=s.banks;
-        if(s.credit&&s.credit.length)state.credit=s.credit;
-        if(s.owed&&s.owed.length)state.owed=s.owed;
-        if(s.todo&&s.todo.length)state.todo=s.todo;
-        if(s.reimbAED!=null)state.reimbAED=s.reimbAED;
-        if(s.reimbRate!=null)state.reimbRate=s.reimbRate;
-        if(typeof s.reimbCur==='string')state.reimbCur=s.reimbCur;
-        if(s.currency){state.currency=s.currency;document.getElementById('currency').value=s.currency;}
-        if(s.start&&!isNaN(s.start.y)&&s.start.m>=0&&s.start.m<=11)state.start=s.start;
-        if(s.count>0)state.count=Math.min(s.count|0,120);
-        if(typeof s.docTitle==='string')state.docTitle=s.docTitle;
-        if(typeof s.summaryDate==='string')state.summaryDate=s.summaryDate;
-        render();
-      }catch(e){restore(snap);try{render();}catch(_){}alert("Couldn't read that file \u2014 make sure it's a plan saved from this page.");}
-    };
+    rd.onload=function(){try{loadText(String(rd.result));setFileName(f.name);fileHandle=null;}catch(err){alert("Couldn't read that file \u2014 make sure it's a plan saved from this page.\n\n("+((err&&err.message)||err)+")");}};
     rd.readAsText(f);ev.target.value='';
   });
 
@@ -985,20 +1029,6 @@
       throw e;
     }
   }
-  document.getElementById('exportCsv').addEventListener('click',function(){
-    var blob=new Blob(['﻿'+buildCSV()],{type:'text/csv;charset=utf-8;'});
-    var url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='relocation-plan.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
-  });
-  document.getElementById('importCsv').addEventListener('click',function(){document.getElementById('csvFile').click();});
-  document.getElementById('csvFile').addEventListener('change',function(ev){
-    var f=ev.target.files[0];if(!f)return;var rd=new FileReader();
-    rd.onload=function(){
-      try{applyCSV(String(rd.result));}
-      catch(e){alert("Couldn't read that CSV — make sure it's a plan exported from this page.\n\n("+((e&&e.message)||e)+")");}
-    };
-    rd.readAsText(f);ev.target.value='';
-  });
-
   document.getElementById('currency').value=state.currency;
   render();
   if(document.fonts&&document.fonts.ready){document.fonts.ready.then(function(){paginateTodo(true);});}
