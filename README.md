@@ -3,6 +3,8 @@
 A self-contained relocation calendar & cash-flow planner — a single-page web app
 with no build step or dependencies.
 
+**Live:** https://nicholasantoniadesengineer.github.io/calendar/
+
 ## Usage
 
 Open [`relocation-calendar.html`](relocation-calendar.html) directly in a browser.
